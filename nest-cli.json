@@ -1,0 +1,11 @@
+{
+  "collection": "@nestjs/schematics",
+  "sourceRoot": "src",
+  "$schema": "https://json.schemastore.org/nest-cli",
+  "compilerOptions": {
+    
+  },
+  "generateOptions": {
+    "spec": false
+  }
+}

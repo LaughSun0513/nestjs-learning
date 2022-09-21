@@ -655,3 +655,160 @@ bootstrap();
 
 // 然后访问 http://localhost:3000/imgs/1663745192599.png 就可以访问到这张图片了
 ```
+
+## 需求: 下载图片
+- 直接下载 res.download
+- 文件流的方式下载
+
+服务器端利用`pnpm install compressing`这个包,通过zip流的方式将图片压缩成xxx.zip
+```ts
+@Get('streamDownload')
+  async streamDownload(@Res() res) { 
+    const url = join(__dirname, '../images/1663745192599.png');
+    const tarStream = new zip.Stream();
+    await tarStream.addEntry(url);
+    // 设置下载的请求头
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Disposition', 'attachment; filename=zhangsan');
+    tarStream.pipe(res);
+}
+```
+前端请求图片的buffer，利用a去模拟点击下载
+```ts
+const useFetch = async (url) => {
+  const res = await fetch(url).then(res => res.arrayBuffer())
+  console.log(res)
+  
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(new Blob([res],{
+    // type:"image/png"
+  }))
+  a.download = 'zhangsan.zip';
+  a.click()
+}
+const download = () => {
+  useFetch('http://localhost:3000/upload/streamDownload')
+}
+download();
+```
+
+## 拦截器interceptor
+拦截器具有一系列有用的功能，这些功能受面向切面编程（AOP）技术的启发
+- 在函数执行之前/之后绑定额外的逻辑
+- 转换从函数返回的结果
+- 转换从函数抛出的异常
+- 扩展基本函数行为
+- 根据所选条件完全重写函数 (例如, 缓存目的)
+
+### 可以让接口的返回json保持一个规范的输出
+```json
+{
+  data, //数据
+  code:0,
+  message:"成功",
+  success:true
+}
+```
+
+```bash
+nest g itc interceptor/response.ts
+```
+
+利用Rxjs的pipe管道来对数据进行处理
+```ts
+import { CallHandler, ExecutionContext, Injectable, NestInterceptor } from '@nestjs/common';
+import { Observable } from 'rxjs';
+import { map } from 'rxjs/operators';
+
+interface data<T> {
+  data: T
+}
+@Injectable()
+export class ResponseInterceptor<T = any> implements NestInterceptor {
+  intercept(context: ExecutionContext, next: CallHandler): Observable<data<T>> {
+    return next.handle().pipe(map(data => { 
+      // 拦截器 可以format输出的结果保持一个格式
+      return {
+        data,
+        code: 0,
+        success: true,
+        message: '666'
+      }
+    }))
+  }
+}
+```
+
+在main.ts注册使用
+```ts
+import { ResponseInterceptor } from './interceptor/response.interceptor';
+
+app.useGlobalInterceptors(new ResponseInterceptor());
+```
+
+访问 http://localhost:3000/cats
+
+```json
+{
+    "data": {
+        "code": 202,
+        "ip": "::1",
+        "hosts": {},
+        "headers": {},
+        "body": {},
+        "query": {},
+        "params": {},
+        "session": {},
+    },
+    "code": 0,
+    "success": true,
+    "message": "666"
+}
+```
+
+## 过滤器filter
+
+让我们创建一个异常过滤器，它负责捕获作为HttpException类实例的异常，并为它们设置自定义响应逻辑。为此，我们需要访问底层平台 Request和 Response。我们将访问Request对象，以便提取原始 url并将其包含在日志信息中。我们将使用 Response.json()方法，使用 Response对象直接控制发送的响应
+```bash
+nest g f filter/httpError
+```
+
+```ts
+import { ArgumentsHost, Catch, ExceptionFilter, HttpException } from '@nestjs/common';
+import { Request, Response } from 'express';
+
+@Catch(HttpException)
+export class HttpErrorFilter implements ExceptionFilter {
+  catch(exception: HttpException, host: ArgumentsHost) {
+    const ctx = host.switchToHttp();
+    const req = ctx.getRequest<Request>();
+    const res = ctx.getResponse<Response>();
+
+    const status = exception.getStatus();
+
+    res.status(status).json({
+      data: exception.message,
+      time: new Date().getTime(),
+      success: false,
+      path: req.url,
+      status
+    })
+  }
+}
+```
+
+使用过滤器
+```ts
+app.useGlobalFilters(new HttpErrorFilter());
+```
+
+访问一个没有的路径 http://localhost:3000/no
+```ts
+{
+    "data": "Cannot GET /no",
+    "time": 1663764545725,
+    "success": false,
+    "path": "/no",
+    "status": 404
+}
+```

@@ -16,11 +16,4 @@ export class CatsService {
     return `1111This action returns a #${id} cat`;
   }
 
-  // update(id: number, updateCatDto: UpdateCatDto) {
-  //   return `This action updates a #${id} cat`;
-  // }
-
-  // remove(id: number) {
-  //   return `This action removes a #${id} cat`;
-  // }
 }

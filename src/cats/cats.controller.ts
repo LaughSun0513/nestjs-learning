@@ -15,7 +15,9 @@ import {
   Headers,
   Ip,
   HostParam,
-  Session
+  Session,
+  Logger,
+  Inject
 } from '@nestjs/common';
 import { CatsService } from './cats.service';
 import { CreateCatDto } from './dto/create-cat.dto';
@@ -23,7 +25,11 @@ import { UpdateCatDto } from './dto/update-cat.dto';
 
 @Controller('cats')
 export class CatsController {
-  constructor(private readonly catsService: CatsService) {}
+  constructor(
+    @Inject('CatsService111') private readonly catsService: CatsService,
+    @Inject('lalala') private arr: string[],
+    @Inject('CatsService23') private readonly CatsService23:any
+  ) { }
 
   @Post()
   create(@Body() createCatDto: CreateCatDto) {
@@ -50,7 +56,8 @@ export class CatsController {
       body,
       query,
       params,
-      session
+      session,
+      arr: this.arr
     }
   }
 
@@ -62,33 +69,22 @@ export class CatsController {
 
   //http://localhost:3000/cats/1?name=123
   @Get(':id')
-  findOne(@Req() req, @Res() res) {
+  findOne(@Req() req) {
   // findOne(@Request() req) {
     return {
       params: req.params,
-      query: req.query,
-      res
+      query: req.query
     }
   }
 
+  
   //http://localhost:3000/cats/1?name=123
   // @Get(':id')
   // findOne(@Query() query) {
-
   //   return {
   //     query: query // {"name":"123"}
   //   }
   // }
 
-
-
-  // @Patch(':id')
-  // update(@Param('id') id: string, @Body() updateCatDto: UpdateCatDto) {
-  //   return this.catsService.update(+id, updateCatDto);
-  // }
-
-  // @Delete(':id')
-  // remove(@Param('id') id: string) {
-  //   return this.catsService.remove(+id);
-  // }
 }
+

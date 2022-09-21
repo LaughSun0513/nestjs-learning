@@ -128,6 +128,7 @@ CREATE src/aaa/entities/aaa.entity.ts (20 bytes)
 - 使用工具httpie https://zhuanlan.zhihu.com/p/45093545
 - vscode插件 rest client
 - postman
+- Apifox
 
 ## @Module
 - 基础模块 imports/controllers/providers
@@ -539,3 +540,118 @@ bootstrap();
 // 访问 http://localhost:3000/cats 就可以正常返回
 ```
 
+### 第三方中间件 别人写的包
+比如cors处理跨域
+
+```bash
+pnpm install cors
+pnpm install @types/cors -D
+```
+
+```ts
+import * as cors from 'cors';
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+  //...
+  app.use(cors());
+  await app.listen(3000);
+}
+bootstrap();
+```
+
+浏览器控制台测一下
+```
+fetch('http://localhost:3000/cats')
+.then(res=>res.json())
+.then(res=> console.log(res));
+```
+
+## 需求: 上传图片
+依赖
+- pnpm install multer @types/multer
+- @nestjs/platform-express 自带
+
+
+使用
+```ts
+// upload.module.ts
+// ...
+import { MulterModule } from '@nestjs/platform-express';
+import { diskStorage } from 'multer';
+import { extname, join } from 'path';
+
+// 定义上传的模块
+const uploadImg = MulterModule.register({
+  storage: diskStorage({
+    destination: join(__dirname, '../images'), // 这个会在dist下面自动生成一个images静态目录
+    filename: (req, file, callback) => {
+      console.log(file);
+      /*
+      {
+        fieldname: 'file',
+        originalname: '10e0fbaeef65ca14aaf43d0c8.png',
+        encoding: '7bit',
+        mimetype: 'image/png'
+      }
+      */
+      // extname(file.originalname) ==> .png 获取到文件的后缀
+      const fileName = `${Date.now() + extname(file.originalname)}`; // 按时间戳给图片取个名字，比如1663745192599.png
+      return callback(null, fileName);
+    }
+  })
+})
+@Module({
+  imports: [uploadImg],
+})
+export class UploadModule {}
+```
+
+```ts
+// upload.controller.ts
+import { UseInterceptors, UploadedFile, Post } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+
+@Controller('upload')
+export class UploadController {
+
+  @Post('imgs')
+  // 上传单个文件
+  @UseInterceptors(FileInterceptor('file'))
+  uploadImg(@UploadedFile() file) { 
+    console.log('upload===>', file)
+    /*
+    {
+      fieldname: 'file',
+      originalname: '10e0fbaeef65ca14aaf43d0c8.png',
+      encoding: '7bit',
+      mimetype: 'image/png',
+      destination: '/Users/.../dist/images',
+      filename: '.png1663744808703',
+      path: '/Users/.../dist/images/.png1663744808703',
+      size: 69322
+    }
+    */
+    return '你小子可以啊,竟然会使用nest上传图片了';
+  }
+}
+```
+
+使用apifox http://localhost:3000/upload/imgs  
+post请求 + body里面选择参数file点击上传文件 发送即可收到文件对象
+
+最终会上传到dist下面，如果想访问静态的图片，我们这边还要给它加一个假的目录名字
+```ts
+import { NestExpressApplication } from '@nestjs/platform-express';
+import { join } from 'path';
+
+async function bootstrap() {
+  const app = await NestFactory.create<NestExpressApplication>(AppModule); // 这里必须加上NestExpressApplication不然没有useStaticAssets方法
+  // ...
+  app.useStaticAssets(join(__dirname, 'images'), {prefix: '/imgs'}); // 相当于用户访问了imgs的路径，给它一个假目录，实际去的是images目录
+  // ...
+}
+bootstrap();
+
+// 然后访问 http://localhost:3000/imgs/1663745192599.png 就可以访问到这张图片了
+```

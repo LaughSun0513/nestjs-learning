@@ -3,7 +3,7 @@ import { DynamicModule, Module, Global } from '@nestjs/common';
 interface Options { 
     path: string;
 }
-
+// 全局模块
 @Global()
 @Module({})
 export class ConfigModule {

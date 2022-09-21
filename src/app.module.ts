@@ -4,12 +4,14 @@ import { AppService } from './app.service';
 import { CatsModule } from './cats/cats.module';
 import { UserModule } from './user/user.module';
 import { ConfigModule } from './config/config.module';
+import { UploadModule } from './upload/upload.module';
 
 @Module({
   imports: [
     CatsModule,
     UserModule,
-    ConfigModule.forRoot({ path: '/zhangsan' })
+    ConfigModule.forRoot({ path: '/zhangsan' }),
+    UploadModule
   ],
   controllers: [AppController],
   providers: [AppService],

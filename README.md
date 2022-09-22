@@ -23,6 +23,7 @@
 
 # 参考资料
 https://blog.csdn.net/qq1195566313/category_11844396.html
+https://www.ddhigh.com/tags/nestjs/
 
 ### 怎么初始化
 #### nest命令的使用
@@ -769,6 +770,29 @@ app.useGlobalInterceptors(new ResponseInterceptor());
 ## 过滤器filter
 
 让我们创建一个异常过滤器，它负责捕获作为HttpException类实例的异常，并为它们设置自定义响应逻辑。为此，我们需要访问底层平台 Request和 Response。我们将访问Request对象，以便提取原始 url并将其包含在日志信息中。我们将使用 Response.json()方法，使用 Response对象直接控制发送的响应
+
+### 异常处理
+#### 内置异常过滤器
+```ts
+import { HttpException, HttpStatus } from '@nestjs/common';
+throw new HttpException('您无权登录', HttpStatus.FORBIDDEN);
+```
+#### 自定义异常
+```ts
+// 继承HttpException然后自己封装错误码/错误信息/状态码
+// user.exception.ts
+import { HttpException } from '@nestjs/common';
+export class UserException extends HttpException {
+    constructor(errcode: number, errmsg: string, statusCode:number) { 
+        super({ errcode, errmsg }, statusCode);
+    }
+}
+// user.service.ts
+import { UserException } from './user.exception'
+throw new UserException(40010, '您无权登录', HttpStatus.FORBIDDEN);
+```
+
+#### 自定义异常过滤器
 ```bash
 nest g f filter/httpError
 ```
@@ -797,7 +821,28 @@ export class HttpErrorFilter implements ExceptionFilter {
 }
 ```
 
-使用过滤器
+使用过滤器有三种作用范围,使用`@UseFilters`注册自定义异常过滤器
+
+#### 方法级别
+只会处理该方法上抛出的异常，其他方法抛出的异常不会处理
+```ts
+@Post('login')
+@UseFilters(HttpErrorFilter)
+login(@Body('username') username:string, password: string) {
+  throw new UserException(40010, '您无权登录');
+}
+```
+#### 控制器级别
+只会处理该控制器方法上抛出的异常，其他控制器抛出的异常不处理
+```ts
+@Controller('user')
+@UseFilters(HttpErrorFilter)
+export class UserController {
+  
+}
+```
+#### 全局级别
+在应用入口注册，不会对Websocket或者混合应用（同时支持两种应用，如HTTP/GRPC或者HTTP/WebSocket）生效。一般Web开发中全局异常过滤器已经够用了。
 ```ts
 app.useGlobalFilters(new HttpErrorFilter());
 ```
@@ -812,3 +857,323 @@ app.useGlobalFilters(new HttpErrorFilter());
     "status": 404
 }
 ```
+
+#### 捕获多种异常或者所有异常
+如果有系统异常，会使用内置的异常处理器。通过传入异常类型给@Catch装饰器来捕获多种异常。如果不传任何异常类型的话，NestJs会捕获所有异常（也就是Error及其子类）
+```ts
+import { ArgumentsHost, Catch, ExceptionFilter, HttpException } from '@nestjs/common';
+import { Request, Response } from 'express';
+
+@Catch() // 啥也不写，那就是捕获所有异常
+export class HttpErrorFilter implements ExceptionFilter {
+  catch(exception: HttpException, host: ArgumentsHost) {
+    const ctx = host.switchToHttp();
+    const req = ctx.getRequest<Request>();
+    const res = ctx.getResponse<Response>();
+
+    const status = exception.getStatus();
+    console.log('%s %s error: %s', req.method, req.url, exception.message);
+    res.status(status).json({
+      data: exception.message,
+      time: new Date().getTime(),
+      success: false,
+      path: req.url,
+      status
+    })
+  }
+}
+```
+
+## 守卫guard
+在访问指定的路由之前回调一个处理函数，如果该函数返回true或者调用了next()就会放行当前访问，否则阻断当前访问
+
+### 创建路由守卫
+通过继承CanActive接口即可定义一个路由守卫
+`nest g gu xxx`
+
+```ts
+import { CanActivate, ExecutionContext, Injectable, Logger } from '@nestjs/common';
+import { Observable } from 'rxjs';
+
+@Injectable()
+export class XxxGuard implements CanActivate {
+  
+  canActivate(
+    context: ExecutionContext,
+  ): boolean | Promise<boolean> | Observable<boolean> {
+    const request = context.switchToHttp().getRequest<Request | any>();
+
+    // ...写逻辑
+    
+    return true
+  }
+}
+```
+
+### 使用路由守卫
+路由守卫级别
+ - 控制器级别
+ - 方法级别
+ - 全局级别
+
+```ts
+// 控制器级别
+@Controller('user')
+@UseGuards(UserGuard)
+export class UserController {
+  // 查看当前用户信息
+  @Get('info')
+  info() {
+    return {username: 'fake_user'};
+  }
+}
+
+// 方法级别
+@Get('info')
+@UseGuards(UserGuard)
+info() {
+  return {username: 'fake_user'};
+}
+
+// 全局级别
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+  // 由于main.ts启动时并未初始化依赖注入容器，所以依赖必须手动传入，一般情况下不建议使用全局守卫，因为依赖注入得自己解决。
+  app.useGlobalGuards(new UserGuard(new UserService()));
+  await app.listen(3000);
+}
+bootstrap();
+```
+
+
+#### 路由守卫与中间件
+> 区别： 路由守卫本质上也是中间件的一种，koa或者express开发中接口鉴权就是基于中间件开发的，如果当前请求是不被允许的，当前中间件将不会调用后续中间件，达到阻断请求的目的，但是中间件的职责是不明确的，中间件可以干任何事（数据校验，格式转化，响应体压缩等等），这导致只能通过名称来识别中间件，项目迭代比较久以后，有比较高的维护成本
+> 由于单一职责的关系，路由守卫只能返回true和false来决定放行/阻断当前请求，不可以修改request/response对象，因为一旦破坏单一职责的原则，排查问题比较麻烦
+> 如果需要修改request对象，可以结合中间件一起使用
+
+> 路由守卫在所有中间件执行完毕之后开始执行
+> 中间件 --> 路由守卫
+
+#### 小例子: 路由守卫+中间件实现验证header里的参数authorization，然后返回user信息
+`nest g mi middleware/auth`
+
+```ts
+// auth.middleware.ts
+import { Injectable, NestMiddleware, Logger } from '@nestjs/common';
+import { Request, Response } from 'express';
+import { UserService } from '~/user/user.service'
+
+@Injectable()
+export class AuthMiddleware implements NestMiddleware {
+  constructor(private readonly userService: UserService) { }
+  async use(req: Request | any, res: Response, next: () => void) {
+    // 把authorization拿出来验证
+    const token = req.header('authorization');
+    console.log('token', token);
+    if(!token) {
+      next();
+      return;
+    }
+    // 去 user.service.ts里面写getUserByToken
+    const user = await this.userService.getUserByToken(token);
+    if(!user) {
+      next();
+      return;
+    }
+    Logger.log('我是auth中间件,header里有Authorization才可以通过')
+    // header上有authorization的值，那就把用户信息挂到req上，否则都没有user，说明不能通过
+    req.user = user;
+    next();
+  }
+}
+
+// user.service.ts
+import { Injectable } from '@nestjs/common';
+
+@Injectable()
+export class UserService {
+    async getUserByToken(token:string) { 
+        if (token === 'lisi') { 
+            return {
+                name: 'lisi',
+                age: 18
+            }
+        }
+        return null;
+    }
+}
+```
+
+`nest g gu user2` 创建路由守卫
+
+```ts
+// user2.guard.ts
+import { CanActivate, ExecutionContext, Injectable, Logger } from '@nestjs/common';
+import { Observable } from 'rxjs';
+
+// 如果该函数返回true或者调用了next()就会放行当前访问，否则阻断当前访问
+@Injectable()
+export class UserGuard2 implements CanActivate {
+    canActivate(
+        context: ExecutionContext,
+    ): boolean | Promise<boolean> | Observable<boolean> {
+        const request = context.switchToHttp().getRequest<Request | any>();
+        console.log('我是路由守卫,你得先通过auth中间件才能到我这里,我得看看req上有没有user,没有你就过不去了')
+        return !!request.user; // 如果有user那就说明通过了路由守卫
+    }
+}
+```
+以上都是在定义中间件+定义路由守卫
+
+使用中间件
+```ts
+// user.module.ts
+import { AuthMiddleware } from '../middleware/auth.middleware';
+
+export class UserModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    // 注册中间件，不注册没法用
+    consumer.apply(AuthMiddleware).forRoutes(UserController);
+  }
+}
+```
+
+使用路由守卫
+```ts
+import { UseGuards } from '@nestjs/common';
+import { UserGuard2 } from './user2.guard';
+
+export class UserController {
+  @Post('info2')
+  @UseGuards(UserGuard2)
+  guardAndMiddlwareToValidateAuthorization(@Req() req) { 
+    return req.user;
+  }
+}
+```
+
+post请求 http://localhost:3000/user/info2 header里带Authorization=lisi
+```json
+{
+    "data": {
+        "name": "lisi",
+        "age": 18
+    },
+    "code": 0,
+    "success": true,
+    "message": "666"
+}
+```
+
+#### 小案例: 单独使用路由守卫实现header里Authorization的验证
+nest g gu user
+
+定义路由守卫
+```ts
+// user.guard.ts
+import { CanActivate, ExecutionContext, Injectable, Logger } from '@nestjs/common';
+import { Observable } from 'rxjs';
+import { UserService } from './user.service';
+
+// 如果该函数返回true或者调用了next()就会放行当前访问，否则阻断当前访问
+@Injectable()
+export class UserGuard implements CanActivate {
+  constructor(private readonly userService: UserService) { }
+  
+  canActivate(
+    context: ExecutionContext,
+  ): boolean | Promise<boolean> | Observable<boolean> {
+
+    const request = context.switchToHttp().getRequest<Request | any>();
+    // 读取token
+    const authorization = request.header('authorization');
+    if (!authorization) {
+      return false;
+    }
+    return this.userService.validateAuthorization(authorization)
+  }
+}
+
+// user.service.ts
+@Injectable()
+export class UserService {
+    validateAuthorization(authorization: string) {
+        // 这里去验证authorization 这里直接通过，校验逻辑可以自己写
+        // 验证是不是zhangsan
+        return true;
+    }
+}
+```
+
+使用路由守卫`@UseGuards(xxx)`
+```ts
+import { UseGuards } from '@nestjs/common';
+import { UserGuard } from './user.guard';
+// user.controller.ts
+@Post('info')
+@UseGuards(UserGuard)
+guardTovalidateAuthorization() { 
+  return {
+    name: 'zhangsan',
+    age: 18
+  }
+} 
+```
+
+post请求 http://localhost:3000/user/info header里带Authorization=zhangsan
+
+#### 反射示例——基于角色的权限验证(RBAC)
+定义角色装饰器
+被角色装饰器装饰的控制器或者方法在访问时，路由守卫会读取当前用户的角色，与装饰器传入的角色相匹配，如果匹配失败，将阻断请求，否则将放行请求。
+
+```ts
+// roles.decorator.ts
+import { SetMetadata } from '@nestjs/common';
+
+export const Roles = (...roles: string[]) => SetMetadata('roles', roles);
+```
+
+定义控制器
+假设我们有一个只允许管理员访问的创建用户的接口：
+```ts
+@Post('create')
+@Roles('admin')
+async create(@Body() createUserDTO: CreateUserDTO) {
+  this.userService.create(createUserDTO);
+}
+```
+定义路由守卫
+```ts
+// role.guard.ts
+import { Injectable, CanActivate, ExecutionContext } from '@nestjs/common';
+import { Observable } from 'rxjs';
+import { Reflector } from '@nestjs/core';
+
+@Injectable()
+export class RolesGuard implements CanActivate {
+  constructor(private readonly reflector: Reflector) {}
+
+  canActivate(context: ExecutionContext): boolean {
+    // 获取roles元数据，roles与roles.decorator.ts中SetMetadata()第一个参数一致
+    const roles = this.reflector.get<string[]>('roles', context.getHandler());
+    if (!roles) { // 未被装饰器装饰，直接放行
+      return true;
+    }
+    const request = context.switchToHttp().getRequest();
+    const user = request.user; // 读取请求对象的user，该user对象可以通过中间件来设置（本文前面有例子）
+    const hasRole = () => user.roles.some((role) => roles.includes(role));
+    return user && user.roles && hasRole();
+  }
+}
+```
+
+#### 异常处理
+路由守卫返回false时框架会抛出ForbiddenException，客户端收到的默认响应如下：
+```json
+{
+  "statusCode": 403,
+  "message": "Forbidden resource"
+}
+```
+如果需要抛出其他异常，比如UnauthorizedException，可以直接在路由守卫的canActive()方法中抛出。
+另外，在这里抛出的异常时可以被异常过滤器捕获并且处理的，所以我们可以自定义异常类型以及输出自定义响应数据。

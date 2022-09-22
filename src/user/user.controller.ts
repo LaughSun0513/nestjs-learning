@@ -2,12 +2,16 @@ import {
   Controller,
   Get,
   Post,
-  Req, Res, Body
+  Req, Res, Body, UseGuards
 } from '@nestjs/common';
 import * as svgCaptcha from 'svg-captcha';
+import { UserService } from './user.service';
+import { UserGuard } from './user.guard';
+import { UserGuard2 } from './user2.guard';
 
 @Controller('user')
 export class UserController {
+  constructor(private readonly userService: UserService) { }
   // http://localhost:3000/user/captcha
   @Get('captcha')
   createCaptcha(@Req() req, @Res() res) {
@@ -39,5 +43,26 @@ export class UserController {
       code: -1,
       msg: '验证码不对啊,再仔细看看'
     }
+  }
+
+  @Post('login')
+  login(@Body() body) {
+    const { username, password } = body;
+    return this.userService.login(username, password);
+  }
+
+  @Post('info')
+  @UseGuards(UserGuard)
+  guardTovalidateAuthorization() { 
+    return {
+      name: 'zhangsan',
+      age: 18
+    }
+  }
+
+  @Post('info2')
+  @UseGuards(UserGuard2)
+  guardAndMiddlwareToValidateAuthorization(@Req() req) { 
+    return req.user;
   }
 }

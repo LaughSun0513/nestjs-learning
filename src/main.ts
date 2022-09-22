@@ -33,7 +33,7 @@ async function bootstrap() {
   app.useStaticAssets(join(__dirname, 'images'), { prefix: '/imgs' });
   
   app.useGlobalInterceptors(new ResponseInterceptor());
-  app.useGlobalFilters(new HttpErrorFilter());
+  // app.useGlobalFilters(new HttpErrorFilter());
   await app.listen(3000);
 }
 bootstrap();

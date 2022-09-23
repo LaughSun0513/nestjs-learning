@@ -701,7 +701,37 @@ download();
 - 扩展基本函数行为
 - 根据所选条件完全重写函数 (例如, 缓存目的)
 
-### 可以让接口的返回json保持一个规范的输出
+### 拦截器作用域
+- 全局拦截器
+- 控制器拦截器
+- 路由方法拦截器
+
+```ts
+// 全局拦截器
+const app = await NestFactory.create(AppModule);
+app.useGlobalInterceptors(new AppInterceptor());
+```
+
+```ts
+// 控制器拦截器
+@Controller('user')
+@UseInterceptors(AppInterceptor)
+export class UserController {
+}
+```
+```ts
+// 路由方法拦截器
+@Controller('user')
+export class UserController {
+  @UseInterceptors(AppInterceptor)
+  @Get()
+  list() {
+    return [];
+  }
+}
+```
+
+### 小例子1: 可以让接口的返回json保持一个规范的输出
 ```json
 {
   data, //数据
@@ -717,9 +747,10 @@ nest g itc interceptor/response.ts
 
 利用Rxjs的pipe管道来对数据进行处理
 ```ts
-import { CallHandler, ExecutionContext, Injectable, NestInterceptor } from '@nestjs/common';
+import { CallHandler, ExecutionContext, Injectable, NestInterceptor, Logger } from '@nestjs/common';
 import { Observable } from 'rxjs';
 import { map } from 'rxjs/operators';
+import { format } from 'util';
 
 interface data<T> {
   data: T
@@ -766,6 +797,105 @@ app.useGlobalInterceptors(new ResponseInterceptor());
     "message": "666"
 }
 ```
+
+### 小例子2: 一个请求链路日志记录拦截器
+`nest g itc interceptor/app`
+
+```ts
+import { CallHandler, ExecutionContext, Injectable, NestInterceptor, Logger } from '@nestjs/common';
+import { Observable } from 'rxjs';
+import { tap } from 'rxjs/operators';
+import { Request } from 'express';
+import { format } from 'util';
+
+@Injectable()
+export class AppInterceptor implements NestInterceptor {
+  private readonly _logger = new Logger();
+  intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
+    const start = Date.now(); // 请求开始时间
+
+    return next.handle().pipe(tap(res => {
+      const host = context.switchToHttp();
+      const req = host.getRequest<Request>();
+
+      this._logger.log(format(
+        '%s %s %dms %s',
+        req.method,
+        req.url,
+        Date.now() - start,
+        JSON.stringify(res,null, 4)
+      ));
+    }));
+  }
+}
+```
+在cats接口里面使用
+```ts
+import { AppInterceptor } from '~/interceptor/app.interceptor';
+
+@UseInterceptors(AppInterceptor)
+func(){}
+```
+
+请求的时候，会打印日志
+```
+[Nest] 44736  - 2022/09/23 下午3:49:00     LOG GET /cats 4ms {...}
+```
+
+
+### 小例子3: 异常映射,利用RxJs的catchError来覆盖路由处理函数抛出的异常
+```ts
+import {
+  Injectable,
+  NestInterceptor,
+  ExecutionContext,
+  BadGatewayException,
+  CallHandler,
+} from '@nestjs/common';
+import { Observable, throwError } from 'rxjs';
+import { catchError } from 'rxjs/operators';
+
+@Injectable()
+export class ErrorsInterceptor implements NestInterceptor {
+  intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
+    return next
+      .handle()
+      .pipe(
+        catchError(err => throwError(new BadGatewayException())) // catchError用来捕获异常
+      );
+  }
+}
+```
+
+### 小例子4: 重写路由函数逻辑,缓存拦截器
+```ts
+import { Injectable, NestInterceptor, ExecutionContext, CallHandler } from '@nestjs/common';
+import { Observable, of } from 'rxjs';
+
+@Injectable()
+export class CacheInterceptor implements NestInterceptor {
+  constructor(private readonly cacheService: CacheService) {}
+  
+   async intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
+  	const host = context.switchToHttp();
+    const request = host.getRequest();
+    if(request.method !== 'GET') {  
+      // 非GET请求放行
+      return next.handle();
+    }
+    const cachedData = await this.cacheService.get(request.url);
+    if(cachedData) { 
+      // 命中缓存，直接放行
+      return of(cachedData);
+    }
+    return next.handle().pipe(tap(response) => { 
+      // 响应数据写入缓存，此处可以等待缓存写入完成，也可以不等待
+      this.cacheService.set(request.method, response);
+    });
+  }
+}
+```
+
 
 ## 过滤器filter
 
@@ -1177,3 +1307,114 @@ export class RolesGuard implements CanActivate {
 ```
 如果需要抛出其他异常，比如UnauthorizedException，可以直接在路由守卫的canActive()方法中抛出。
 另外，在这里抛出的异常时可以被异常过滤器捕获并且处理的，所以我们可以自定义异常类型以及输出自定义响应数据。
+
+
+客户端请求 -> 中间件 -> 路由守卫 -> 管道 -> 控制器方法
+
+## 管道
+干啥的？
+- `数据转换` 将输入数据转换为所需的输出
+- `验证参数` 接收客户端提交的参数，如果通过验证则继续传递，如果验证未通过则提示错误
+
+### 小例子: 验证POST请求的参数
+#### DTO的作用 
+定义数据的类型，比如定义数据的数据类型或者长度之类的
+这里需要一个类型辅助的包 `class-validator`
+
+##### 先定义请求参数的数据类型
+```ts
+// create-cat.dto.ts
+// 对数据的一层包装，防止非法字段的提交和IDE自动提示
+import {
+    IsString,
+    IsNumber,
+    Length
+} from 'class-validator';
+
+// post请求过来是两个参数 catName/catAge
+// @IsString() 是字符串 
+// @Length(min,max) 最小长度 / 最大长度
+export class CreateCatDto {
+    @IsString()
+    @Length(10, 20, { message: 'catName名字太长了不行' }) // 最短--最长
+    readonly catName: string;
+
+    @IsString()
+    @Length(1, 3, { message: 'catAge名字太长了不行' })
+    readonly catAge: string;
+}
+```
+`nest g pi cats/cats` 创建管道`cats.pipe.ts`
+
+##### 写管道逻辑
+- class-transformer 用来转换数据，因为传进来的数据格式没法子验证，需要转成dto的数据格式
+- class-validator 用来验证数据，返回错误信息
+```ts
+// cats.pipe.ts
+import { ArgumentMetadata, Injectable, PipeTransform, BadRequestException } from '@nestjs/common';
+import { plainToClass } from 'class-transformer';
+import { validate } from 'class-validator';
+
+@Injectable()
+export class CatsPipe implements PipeTransform {
+  async transform(value: any, metadata: ArgumentMetadata) {
+    const { metatype } = metadata;
+    console.log('pipe111===>', value, metatype); // { catName: 'xiaomiaomiao', catAge: '11' } [class CreateCatDto]
+    // 如果不是注入的数据且不需要验证，直接跳过处理
+    if (!metatype || !this.toValidate(metatype)) { 
+      return value;
+    }
+    // 数据格式转换 
+    const obj = plainToClass(metatype, value); // 请求传进来的body的参数是个普通对象，转成CreateCatDto的class的类型来校验
+    console.log('pipe222===>', obj); //  CreateCatDto { catName: 'xiaomiaomiao', catAge: '11' }
+    // 如果错误长度大于0，证明出错，需要抛出400错误
+    const errors = await validate(obj);
+    console.log('pipe333===>', errors);
+    if (errors.length > 0) {
+      throw new BadRequestException(errors);
+    }
+    return value;
+  }
+  private toValidate(metatype): boolean { 
+    const types = [String, Number, Boolean, Array, Object];
+    return !types.includes(metatype);
+  }
+}
+```
+
+##### 使用管道
+- 函数级别使用 `@UsePipes(CatsPipe)`
+
+```ts
+import { CatsPipe } from './cats.pipe';
+
+export class CatsController {
+  @Post()
+  @UsePipes(CatsPipe)
+  create(@Body() createCatDto: CreateCatDto) {
+    console.log('createCatDto', createCatDto)
+    return createCatDto
+  }
+}
+```
+
+http://localhost:3000/cats post
+
+如果body里面的参数不符合dto里面定义的，就会报错
+```ts
+{
+    "catName": "xiaomiaomiao",
+    "catAge": "11"
+}
+```
+
+- 全局使用
+
+```ts
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+  app.useGlobalPipes(new ValidationPipe());
+  await app.listen(3000);
+}
+bootstrap();
+```

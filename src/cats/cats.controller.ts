@@ -17,11 +17,15 @@ import {
   HostParam,
   Session,
   Logger,
-  Inject
+  Inject,
+  UsePipes,
+  UseInterceptors
 } from '@nestjs/common';
 import { CatsService } from './cats.service';
 import { CreateCatDto } from './dto/create-cat.dto';
 import { UpdateCatDto } from './dto/update-cat.dto';
+import { CatsPipe } from './cats.pipe';
+import { AppInterceptor } from '~/interceptor/app.interceptor';
 
 @Controller('cats')
 export class CatsController {
@@ -32,13 +36,15 @@ export class CatsController {
   ) { }
 
   @Post()
+  @UsePipes(CatsPipe)
   create(@Body() createCatDto: CreateCatDto) {
-    console.log(createCatDto)
-    return this.catsService.create(createCatDto);
+    console.log('createCatDto', createCatDto)
+    return createCatDto
   }
 
   // http://localhost:3000/cats
   @Get()
+  @UseInterceptors(AppInterceptor)
   @HttpCode(202)
   findAll(
     @Ip() ip: string,

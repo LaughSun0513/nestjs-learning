@@ -22,8 +22,8 @@
 - 怎么增删改查
 
 # 参考资料
-https://blog.csdn.net/qq1195566313/category_11844396.html
-https://www.ddhigh.com/tags/nestjs/
+- https://blog.csdn.net/qq1195566313/category_11844396.html
+- https://www.ddhigh.com/tags/nestjs/
 
 ### 怎么初始化
 #### nest命令的使用
